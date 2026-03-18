@@ -8,7 +8,9 @@ import {
   FileText, 
   MessageSquare, 
   LogOut,
-  Shield
+  Shield,
+  Zap,
+  Play
 } from 'lucide-react';
 
 const Layout = ({ user, onLogout, children }) => {
@@ -17,6 +19,8 @@ const Layout = ({ user, onLogout, children }) => {
   const navigation = [
     { name: 'Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Operators', href: '/operators', icon: Cpu },
+    { name: 'Tasks', href: '/tasks', icon: Zap },
+    { name: 'Executions', href: '/executions', icon: Play },
     { name: 'Audit Log', href: '/audit', icon: FileText },
     { name: 'Chat', href: '/chat', icon: MessageSquare },
   ];

@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 import httpx
 from enum import Enum
+from services import service_manager
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -61,6 +62,23 @@ class AuditEventType(str, Enum):
     OPERATOR_DELETED = "operator_deleted"
     CHAT_MESSAGE = "chat_message"
     SYSTEM_CONFIG = "system_config"
+    TASK_CREATED = "task_created"
+    TASK_EXECUTED = "task_executed"
+    EXECUTION_COMPLETED = "execution_completed"
+    EXECUTION_FAILED = "execution_failed"
+
+class TaskStatus(str, Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    ARCHIVED = "archived"
+
+class ExecutionStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 AUTHORITY_HIERARCHY = [
     {"level": 1, "name": "SOVEREIGN", "description": "Ultimate authority and decision maker"},
@@ -143,6 +161,52 @@ class DashboardStats(BaseModel):
     total_audit_events: int
     recent_activity: List[Dict[str, Any]]
     operators_by_type: Dict[str, int]
+
+class Task(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str
+    operator_id: str
+    operator_type: OperatorType
+    action: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    status: TaskStatus = TaskStatus.ACTIVE
+    created_by: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: Optional[datetime] = None
+
+class TaskCreate(BaseModel):
+    name: str
+    description: str
+    operator_id: str
+    action: str
+    parameters: Optional[Dict[str, Any]] = None
+
+class TaskUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    action: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+    status: Optional[TaskStatus] = None
+
+class Execution(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    task_id: str
+    task_name: str
+    operator_type: OperatorType
+    status: ExecutionStatus = ExecutionStatus.PENDING
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    logs: List[str] = Field(default_factory=list)
+    started_by: str
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+
+class ExecutionCreate(BaseModel):
+    task_id: str
 
 # ============================================
 # AUTHENTICATION & AUTHORIZATION
@@ -513,6 +577,248 @@ async def chat(message: ChatMessage, user: User = Depends(require_auth)):
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail="Chat service error")
 
+# ============================================
+# TASK ROUTES
+# ============================================
+
+@api_router.post("/tasks", response_model=Task)
+async def create_task(task_data: TaskCreate, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Create new task (Editor+ only)"""
+    # Verify operator exists
+    operator = await db.operators.find_one({"id": task_data.operator_id})
+    if not operator:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    
+    task = Task(
+        **task_data.model_dump(),
+        operator_type=operator["type"],
+        created_by=user.id
+    )
+    
+    doc = task.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    
+    await db.tasks.insert_one(doc)
+    await create_audit_log(AuditEventType.TASK_CREATED, f"Created task {task.name}", user, {"task_id": task.id})
+    
+    return task
+
+@api_router.get("/tasks", response_model=List[Task])
+async def list_tasks(user: User = Depends(require_auth)):
+    """List all tasks"""
+    tasks = await db.tasks.find({}, {"_id": 0}).to_list(1000)
+    
+    for task in tasks:
+        if isinstance(task.get('created_at'), str):
+            task['created_at'] = datetime.fromisoformat(task['created_at'])
+        if task.get('updated_at') and isinstance(task['updated_at'], str):
+            task['updated_at'] = datetime.fromisoformat(task['updated_at'])
+    
+    return tasks
+
+@api_router.get("/tasks/{task_id}", response_model=Task)
+async def get_task(task_id: str, user: User = Depends(require_auth)):
+    """Get task by ID"""
+    task = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    if isinstance(task.get('created_at'), str):
+        task['created_at'] = datetime.fromisoformat(task['created_at'])
+    if task.get('updated_at') and isinstance(task['updated_at'], str):
+        task['updated_at'] = datetime.fromisoformat(task['updated_at'])
+    
+    return Task(**task)
+
+@api_router.put("/tasks/{task_id}", response_model=Task)
+async def update_task(task_id: str, task_data: TaskUpdate, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Update task (Editor+ only)"""
+    existing = await db.tasks.find_one({"id": task_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    update_data = {k: v for k, v in task_data.model_dump().items() if v is not None}
+    update_data['updated_at'] = datetime.now(timezone.utc).isoformat()
+    
+    if update_data:
+        await db.tasks.update_one({"id": task_id}, {"$set": update_data})
+    
+    updated_task = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+    
+    if isinstance(updated_task.get('created_at'), str):
+        updated_task['created_at'] = datetime.fromisoformat(updated_task['created_at'])
+    if updated_task.get('updated_at') and isinstance(updated_task['updated_at'], str):
+        updated_task['updated_at'] = datetime.fromisoformat(updated_task['updated_at'])
+    
+    return Task(**updated_task)
+
+@api_router.delete("/tasks/{task_id}")
+async def delete_task(task_id: str, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Delete task (Editor+ only)"""
+    result = await db.tasks.delete_one({"id": task_id})
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return {"message": "Task deleted successfully"}
+
+# ============================================
+# EXECUTION ROUTES
+# ============================================
+
+@api_router.post("/executions", response_model=Execution)
+async def create_execution(exec_data: ExecutionCreate, user: User = Depends(require_auth)):
+    """Execute a task"""
+    # Get task
+    task = await db.tasks.find_one({"id": exec_data.task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # Check if task is active
+    if task.get('status') != 'active':
+        raise HTTPException(status_code=400, detail="Task is not active")
+    
+    # Create execution record
+    execution = Execution(
+        task_id=task['id'],
+        task_name=task['name'],
+        operator_type=task['operator_type'],
+        started_by=user.id
+    )
+    
+    doc = execution.model_dump()
+    doc['started_at'] = doc['started_at'].isoformat()
+    doc['logs'] = []
+    
+    await db.executions.insert_one(doc)
+    await create_audit_log(AuditEventType.TASK_EXECUTED, f"Started execution of task {task['name']}", user, {"execution_id": execution.id})
+    
+    # Execute task asynchronously
+    asyncio.create_task(execute_task_async(execution.id, task, user))
+    
+    return execution
+
+async def execute_task_async(execution_id: str, task: Dict[str, Any], user: User):
+    """Execute task asynchronously"""
+    start_time = datetime.now(timezone.utc)
+    logs = []
+    
+    try:
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Starting execution")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Operator type: {task['operator_type']}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Action: {task['action']}")
+        
+        # Update status to running
+        await db.executions.update_one(
+            {"id": execution_id},
+            {"$set": {"status": "running", "logs": logs}}
+        )
+        
+        # Execute based on operator type
+        result = None
+        
+        if task['operator_type'] == 'browser':
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Executing browser automation")
+            result = await service_manager.browser_service.execute(task['action'], task.get('parameters', {}))
+        
+        elif task['operator_type'] == 'file':
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Executing file operation")
+            result = await service_manager.file_service.execute(task['action'], task.get('parameters', {}))
+        
+        elif task['operator_type'] == 'system':
+            # Check if user is admin
+            if user.role != UserRole.ADMIN:
+                raise PermissionError("System operations require Admin role")
+            
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Executing system operation (Admin only)")
+            result = await service_manager.system_service.execute(task['action'], task.get('parameters', {}))
+        
+        else:
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Operator type not implemented for execution: {task['operator_type']}")
+            result = {"success": False, "error": f"Operator type {task['operator_type']} not implemented"}
+        
+        # Calculate duration
+        end_time = datetime.now(timezone.utc)
+        duration = (end_time - start_time).total_seconds()
+        
+        logs.append(f"[{end_time.isoformat()}] Execution completed in {duration:.2f}s")
+        
+        # Update execution with result
+        await db.executions.update_one(
+            {"id": execution_id},
+            {
+                "$set": {
+                    "status": "completed",
+                    "result": result,
+                    "logs": logs,
+                    "completed_at": end_time.isoformat(),
+                    "duration_seconds": duration
+                }
+            }
+        )
+        
+        await create_audit_log(
+            AuditEventType.EXECUTION_COMPLETED,
+            f"Execution {execution_id} completed successfully",
+            user,
+            {"execution_id": execution_id, "duration": duration}
+        )
+        
+    except Exception as e:
+        end_time = datetime.now(timezone.utc)
+        duration = (end_time - start_time).total_seconds()
+        
+        logs.append(f"[{end_time.isoformat()}] Execution failed: {str(e)}")
+        
+        await db.executions.update_one(
+            {"id": execution_id},
+            {
+                "$set": {
+                    "status": "failed",
+                    "error": str(e),
+                    "logs": logs,
+                    "completed_at": end_time.isoformat(),
+                    "duration_seconds": duration
+                }
+            }
+        )
+        
+        await create_audit_log(
+            AuditEventType.EXECUTION_FAILED,
+            f"Execution {execution_id} failed: {str(e)}",
+            user,
+            {"execution_id": execution_id, "error": str(e)}
+        )
+
+@api_router.get("/executions", response_model=List[Execution])
+async def list_executions(limit: int = 50, user: User = Depends(require_auth)):
+    """List recent executions"""
+    executions = await db.executions.find({}, {"_id": 0}).sort("started_at", -1).limit(limit).to_list(limit)
+    
+    for execution in executions:
+        if isinstance(execution.get('started_at'), str):
+            execution['started_at'] = datetime.fromisoformat(execution['started_at'])
+        if execution.get('completed_at') and isinstance(execution['completed_at'], str):
+            execution['completed_at'] = datetime.fromisoformat(execution['completed_at'])
+    
+    return executions
+
+@api_router.get("/executions/{execution_id}", response_model=Execution)
+async def get_execution(execution_id: str, user: User = Depends(require_auth)):
+    """Get execution by ID"""
+    execution = await db.executions.find_one({"id": execution_id}, {"_id": 0})
+    
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    
+    if isinstance(execution.get('started_at'), str):
+        execution['started_at'] = datetime.fromisoformat(execution['started_at'])
+    if execution.get('completed_at') and isinstance(execution['completed_at'], str):
+        execution['completed_at'] = datetime.fromisoformat(execution['completed_at'])
+    
+    return Execution(**execution)
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -526,4 +832,5 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    await service_manager.cleanup()
     client.close()

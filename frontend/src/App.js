@@ -7,6 +7,8 @@ import Operators from '@/pages/Operators';
 import AuditLog from '@/pages/AuditLog';
 import Users from '@/pages/Users';
 import Chat from '@/pages/Chat';
+import Tasks from '@/pages/Tasks';
+import Executions from '@/pages/Executions';
 import Layout from '@/components/Layout';
 
 function App() {
@@ -61,6 +63,8 @@ function App() {
                 <Routes>
                   <Route path="/" element={<Dashboard user={user} />} />
                   <Route path="/operators" element={<Operators user={user} />} />
+                  <Route path="/tasks" element={<Tasks user={user} />} />
+                  <Route path="/executions" element={<Executions user={user} />} />
                   <Route path="/audit" element={<AuditLog user={user} />} />
                   <Route path="/chat" element={<Chat user={user} />} />
                   {user.role === 'admin' && (
