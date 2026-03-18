@@ -1,0 +1,237 @@
+.operator-viz-container {
+  width: 100%;
+  height: 600px;
+  perspective: 1200px;
+  background: linear-gradient(180deg, #0a0a0a 0%, #1a1a2e 100%);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+}
+
+.operator-viz-container:active {
+  cursor: grabbing;
+}
+
+.operator-viz-scene {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.1s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Central Hub */
+.operator-hub {
+  position: absolute;
+  transform-style: preserve-3d;
+  top: 50%;
+  left: 50%;
+  margin-left: -30px;
+  margin-top: -30px;
+}
+
+.hub-sphere {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #60a5fa, #3b82f6, #1e40af);
+  box-shadow: 0 0 40px #3b82f6, inset 0 0 20px rgba(59, 130, 246, 0.5);
+  animation: hubPulse 2s ease-in-out infinite;
+}
+
+.hub-label {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: white;
+  font-weight: bold;
+  font-size: 18px;
+  text-shadow: 0 0 10px rgba(59, 130, 246, 0.8);
+  white-space: nowrap;
+}
+
+/* Operator Nodes */
+.operator-node {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 80px;
+  height: 80px;
+  margin-left: -40px;
+  margin-top: -40px;
+  transform-style: preserve-3d;
+  transition: transform 0.3s ease;
+}
+
+.operator-sphere {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.9);
+  border: 3px solid;
+  position: relative;
+  animation: float 3s ease-in-out infinite;
+  box-shadow: 0 0 30px var(--operator-color);
+}
+
+.operator-node.active .operator-sphere {
+  animation: float 3s ease-in-out infinite, activeGlow 1.5s ease-in-out infinite;
+}
+
+.operator-label {
+  position: absolute;
+  top: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.operator-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.operator-type {
+  font-size: 10px;
+  color: #9ca3af;
+  letter-spacing: 0.5px;
+}
+
+/* Thinking Particles */
+.thinking-particles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.particle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  animation: particleOrbit 2s linear infinite;
+  opacity: 0.8;
+}
+
+/* Pulse Rings */
+.pulse-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid;
+  transform: translate(-50%, -50%);
+  animation: pulseRing 2s ease-out infinite;
+  opacity: 0;
+}
+
+.pulse-ring-2 {
+  animation-delay: 1s;
+}
+
+/* Connection Lines */
+.connection-line {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    transparent,
+    rgba(59, 130, 246, 0.3),
+    transparent
+  );
+  transform-origin: left center;
+  opacity: 0.3;
+  transition: opacity 0.3s ease;
+}
+
+.connection-line.active {
+  background: linear-gradient(90deg, 
+    transparent,
+    rgba(59, 130, 246, 0.8),
+    transparent
+  );
+  opacity: 1;
+  animation: dataFlow 2s linear infinite;
+}
+
+/* Animations */
+@keyframes hubPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 40px #3b82f6, inset 0 0 20px rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 60px #3b82f6, inset 0 0 30px rgba(59, 130, 246, 0.7);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-10px) rotate(180deg);
+  }
+}
+
+@keyframes activeGlow {
+  0%, 100% {
+    box-shadow: 0 0 30px var(--operator-color);
+  }
+  50% {
+    box-shadow: 0 0 50px var(--operator-color), 0 0 80px var(--operator-color);
+  }
+}
+
+@keyframes particleOrbit {
+  0% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(50px) scale(1);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.8;
+  }
+  80% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(var(--angle)) translateX(80px) scale(0.5);
+    opacity: 0;
+  }
+}
+
+@keyframes pulseRing {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2);
+    opacity: 0;
+  }
+}
+
+@keyframes dataFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}

@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Users, Cpu, FileText, Activity, ArrowDown } from 'lucide-react';
+import OperatorVisualization from '@/components/OperatorVisualization';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -10,6 +11,8 @@ const API = `${BACKEND_URL}/api`;
 const Dashboard = ({ user }) => {
   const [stats, setStats] = useState(null);
   const [hierarchy, setHierarchy] = useState([]);
+  const [operators, setOperators] = useState([]);
+  const [executions, setExecutions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const getAuthHeaders = () => ({
@@ -19,12 +22,16 @@ const Dashboard = ({ user }) => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [statsRes, hierarchyRes] = await Promise.all([
+        const [statsRes, hierarchyRes, operatorsRes, executionsRes] = await Promise.all([
           axios.get(`${API}/dashboard/stats`, getAuthHeaders()),
-          axios.get(`${API}/hierarchy`)
+          axios.get(`${API}/hierarchy`),
+          axios.get(`${API}/operators`, getAuthHeaders()),
+          axios.get(`${API}/executions?limit=10`, getAuthHeaders())
         ]);
         setStats(statsRes.data);
         setHierarchy(hierarchyRes.data.hierarchy);
+        setOperators(operatorsRes.data);
+        setExecutions(executionsRes.data);
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
       } finally {
@@ -33,6 +40,8 @@ const Dashboard = ({ user }) => {
     };
 
     fetchData();
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   if (loading) {
@@ -76,6 +85,44 @@ const Dashboard = ({ user }) => {
           );
         })}
       </div>
+
+      {/* 3D Operator Visualization */}
+      <Card className="bg-gray-900 border-gray-800" data-testid="operator-visualization">
+        <CardHeader>
+          <CardTitle className="text-white">Operator Network Visualization</CardTitle>
+          <CardDescription className="text-gray-400">
+            Live 3D view of your AI operators thinking and communicating
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <OperatorVisualization operators={operators} executions={executions} />
+          <div className="mt-4 flex items-center justify-center space-x-4 text-sm">
+            <div className="flex items-center space-x-2">
+              <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+              <span className="text-gray-400">Browser</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-3 h-3 rounded-full bg-green-500"></div>
+              <span className="text-gray-400">File</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+              <span className="text-gray-400">System</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-3 h-3 rounded-full bg-purple-500"></div>
+              <span className="text-gray-400">API</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-3 h-3 rounded-full bg-pink-500"></div>
+              <span className="text-gray-400">AI</span>
+            </div>
+          </div>
+          <p className="text-center text-xs text-gray-500 mt-3">
+            Drag to rotate • Scroll to zoom • Active operators pulse with thinking particles
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Authority Hierarchy */}
       <Card className="bg-gray-900 border-gray-800" data-testid="authority-hierarchy">
