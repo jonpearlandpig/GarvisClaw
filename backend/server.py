@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import httpx
 from enum import Enum
 from services import service_manager
+from scheduler import scheduler_service
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -207,6 +208,79 @@ class Execution(BaseModel):
 
 class ExecutionCreate(BaseModel):
     task_id: str
+
+class Schedule(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    task_id: str
+    task_name: str
+    schedule_type: str = "cron"  # "cron" or "interval"
+    cron_expression: Optional[str] = None  # "* * * * *" (minute hour day month day_of_week)
+    interval_seconds: Optional[int] = None
+    enabled: bool = True
+    next_run: Optional[datetime] = None
+    last_run: Optional[datetime] = None
+    total_runs: int = 0
+    created_by: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ScheduleCreate(BaseModel):
+    name: str
+    task_id: str
+    schedule_type: str = "cron"
+    cron_expression: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    enabled: bool = True
+
+class ScheduleUpdate(BaseModel):
+    name: Optional[str] = None
+    cron_expression: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    enabled: Optional[bool] = None
+
+class Workflow(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str
+    steps: List[Dict[str, Any]] = Field(default_factory=list)  # [{task_id, order, on_success, on_failure}]
+    status: str = "active"
+    created_by: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class WorkflowCreate(BaseModel):
+    name: str
+    description: str
+    steps: List[Dict[str, Any]]
+
+class WorkflowUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    steps: Optional[List[Dict[str, Any]]] = None
+    status: Optional[str] = None
+
+class Template(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str
+    operator_type: OperatorType
+    action: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    category: str = "general"
+    is_public: bool = True
+    created_by: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class TemplateCreate(BaseModel):
+    name: str
+    description: str
+    operator_type: OperatorType
+    action: str
+    parameters: Dict[str, Any]
+    category: Optional[str] = "general"
+    is_public: Optional[bool] = True
 
 # ============================================
 # AUTHENTICATION & AUTHORIZATION
@@ -819,6 +893,309 @@ async def get_execution(execution_id: str, user: User = Depends(require_auth)):
     
     return Execution(**execution)
 
+# ============================================
+# SCHEDULE ROUTES (PHASE 3)
+# ============================================
+
+async def execute_scheduled_task(task_id: str, schedule_id: str):
+    """Execute a task triggered by scheduler"""
+    try:
+        # Get task
+        task = await db.tasks.find_one({"id": task_id}, {"_id": 0})
+        if not task:
+            logger.error(f"Scheduled task {task_id} not found")
+            return
+        
+        # Get schedule creator as user
+        schedule = await db.schedules.find_one({"id": schedule_id}, {"_id": 0})
+        if not schedule:
+            logger.error(f"Schedule {schedule_id} not found")
+            return
+        
+        user_doc = await db.users.find_one({"id": schedule['created_by']}, {"_id": 0})
+        if not user_doc:
+            logger.error(f"Schedule creator {schedule['created_by']} not found")
+            return
+        
+        if isinstance(user_doc.get('created_at'), str):
+            user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
+        if isinstance(user_doc.get('last_login'), str):
+            user_doc['last_login'] = datetime.fromisoformat(user_doc['last_login'])
+        
+        user = User(**user_doc)
+        
+        # Create execution
+        execution = Execution(
+            task_id=task['id'],
+            task_name=task['name'],
+            operator_type=task['operator_type'],
+            started_by=user.id
+        )
+        
+        doc = execution.model_dump()
+        doc['started_at'] = doc['started_at'].isoformat()
+        await db.executions.insert_one(doc)
+        
+        # Update schedule last_run and total_runs
+        await db.schedules.update_one(
+            {"id": schedule_id},
+            {
+                "$set": {"last_run": datetime.now(timezone.utc).isoformat()},
+                "$inc": {"total_runs": 1}
+            }
+        )
+        
+        # Execute task
+        await execute_task_async(execution.id, task, user)
+        
+    except Exception as e:
+        logger.error(f"Scheduled execution failed: {e}")
+
+@api_router.post("/schedules", response_model=Schedule)
+async def create_schedule(schedule_data: ScheduleCreate, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Create a new schedule (Editor+ only)"""
+    # Verify task exists
+    task = await db.tasks.find_one({"id": schedule_data.task_id})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # Validate schedule
+    if schedule_data.schedule_type == "cron" and not schedule_data.cron_expression:
+        raise HTTPException(status_code=400, detail="Cron expression required for cron schedule")
+    if schedule_data.schedule_type == "interval" and not schedule_data.interval_seconds:
+        raise HTTPException(status_code=400, detail="Interval seconds required for interval schedule")
+    
+    schedule = Schedule(
+        **schedule_data.model_dump(),
+        task_name=task['name'],
+        created_by=user.id
+    )
+    
+    doc = schedule.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    
+    await db.schedules.insert_one(doc)
+    
+    # Add to scheduler
+    try:
+        if schedule.schedule_type == "cron":
+            await scheduler_service.add_scheduled_task(
+                schedule.id,
+                schedule.task_id,
+                schedule.cron_expression,
+                lambda: execute_scheduled_task(schedule.task_id, schedule.id),
+                enabled=schedule.enabled
+            )
+        elif schedule.schedule_type == "interval":
+            await scheduler_service.add_interval_task(
+                schedule.id,
+                schedule.task_id,
+                schedule.interval_seconds,
+                lambda: execute_scheduled_task(schedule.task_id, schedule.id),
+                enabled=schedule.enabled
+            )
+    except Exception as e:
+        # Rollback database insert
+        await db.schedules.delete_one({"id": schedule.id})
+        raise HTTPException(status_code=400, detail=f"Invalid schedule configuration: {str(e)}")
+    
+    return schedule
+
+@api_router.get("/schedules", response_model=List[Schedule])
+async def list_schedules(user: User = Depends(require_auth)):
+    """List all schedules"""
+    schedules = await db.schedules.find({}, {"_id": 0}).to_list(1000)
+    
+    for schedule in schedules:
+        if isinstance(schedule.get('created_at'), str):
+            schedule['created_at'] = datetime.fromisoformat(schedule['created_at'])
+        if schedule.get('next_run') and isinstance(schedule['next_run'], str):
+            schedule['next_run'] = datetime.fromisoformat(schedule['next_run'])
+        if schedule.get('last_run') and isinstance(schedule['last_run'], str):
+            schedule['last_run'] = datetime.fromisoformat(schedule['last_run'])
+    
+    return schedules
+
+@api_router.get("/schedules/{schedule_id}", response_model=Schedule)
+async def get_schedule(schedule_id: str, user: User = Depends(require_auth)):
+    """Get schedule by ID"""
+    schedule = await db.schedules.find_one({"id": schedule_id}, {"_id": 0})
+    
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    if isinstance(schedule.get('created_at'), str):
+        schedule['created_at'] = datetime.fromisoformat(schedule['created_at'])
+    if schedule.get('next_run') and isinstance(schedule['next_run'], str):
+        schedule['next_run'] = datetime.fromisoformat(schedule['next_run'])
+    if schedule.get('last_run') and isinstance(schedule['last_run'], str):
+        schedule['last_run'] = datetime.fromisoformat(schedule['last_run'])
+    
+    return Schedule(**schedule)
+
+@api_router.put("/schedules/{schedule_id}", response_model=Schedule)
+async def update_schedule(schedule_id: str, schedule_data: ScheduleUpdate, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Update schedule (Editor+ only)"""
+    existing = await db.schedules.find_one({"id": schedule_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    update_data = {k: v for k, v in schedule_data.model_dump().items() if v is not None}
+    
+    if update_data:
+        await db.schedules.update_one({"id": schedule_id}, {"$set": update_data})
+        
+        # Update scheduler
+        updated_schedule = await db.schedules.find_one({"id": schedule_id}, {"_id": 0})
+        
+        if updated_schedule['schedule_type'] == "cron":
+            await scheduler_service.add_scheduled_task(
+                schedule_id,
+                updated_schedule['task_id'],
+                updated_schedule['cron_expression'],
+                lambda: execute_scheduled_task(updated_schedule['task_id'], schedule_id),
+                enabled=updated_schedule.get('enabled', True)
+            )
+        elif updated_schedule['schedule_type'] == "interval":
+            await scheduler_service.add_interval_task(
+                schedule_id,
+                updated_schedule['task_id'],
+                updated_schedule['interval_seconds'],
+                lambda: execute_scheduled_task(updated_schedule['task_id'], schedule_id),
+                enabled=updated_schedule.get('enabled', True)
+            )
+    
+    updated_schedule = await db.schedules.find_one({"id": schedule_id}, {"_id": 0})
+    
+    if isinstance(updated_schedule.get('created_at'), str):
+        updated_schedule['created_at'] = datetime.fromisoformat(updated_schedule['created_at'])
+    if updated_schedule.get('next_run') and isinstance(updated_schedule['next_run'], str):
+        updated_schedule['next_run'] = datetime.fromisoformat(updated_schedule['next_run'])
+    if updated_schedule.get('last_run') and isinstance(updated_schedule['last_run'], str):
+        updated_schedule['last_run'] = datetime.fromisoformat(updated_schedule['last_run'])
+    
+    return Schedule(**updated_schedule)
+
+@api_router.delete("/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Delete schedule (Editor+ only)"""
+    result = await db.schedules.delete_one({"id": schedule_id})
+    
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    
+    # Remove from scheduler
+    scheduler_service.remove_scheduled_task(schedule_id)
+    
+    return {"message": "Schedule deleted successfully"}
+
+# ============================================
+# WORKFLOW ROUTES (PHASE 3)
+# ============================================
+
+@api_router.post("/workflows", response_model=Workflow)
+async def create_workflow(workflow_data: WorkflowCreate, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Create a new workflow (Editor+ only)"""
+    workflow = Workflow(**workflow_data.model_dump(), created_by=user.id)
+    
+    doc = workflow.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    
+    await db.workflows.insert_one(doc)
+    
+    return workflow
+
+@api_router.get("/workflows", response_model=List[Workflow])
+async def list_workflows(user: User = Depends(require_auth)):
+    """List all workflows"""
+    workflows = await db.workflows.find({}, {"_id": 0}).to_list(1000)
+    
+    for workflow in workflows:
+        if isinstance(workflow.get('created_at'), str):
+            workflow['created_at'] = datetime.fromisoformat(workflow['created_at'])
+    
+    return workflows
+
+@api_router.post("/workflows/{workflow_id}/execute")
+async def execute_workflow(workflow_id: str, user: User = Depends(require_auth)):
+    """Execute a workflow"""
+    workflow = await db.workflows.find_one({"id": workflow_id}, {"_id": 0})
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    # Execute steps in order
+    results = []
+    for step in sorted(workflow['steps'], key=lambda x: x.get('order', 0)):
+        task_id = step['task_id']
+        
+        # Create execution for this task
+        exec_data = ExecutionCreate(task_id=task_id)
+        execution = await create_execution(exec_data, user)
+        
+        results.append({
+            "task_id": task_id,
+            "execution_id": execution.id,
+            "order": step.get('order', 0)
+        })
+    
+    return {"workflow_id": workflow_id, "executions": results}
+
+# ============================================
+# TEMPLATE ROUTES (PHASE 3)
+# ============================================
+
+@api_router.post("/templates", response_model=Template)
+async def create_template(template_data: TemplateCreate, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Create a new template (Editor+ only)"""
+    template = Template(**template_data.model_dump(), created_by=user.id)
+    
+    doc = template.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    
+    await db.templates.insert_one(doc)
+    
+    return template
+
+@api_router.get("/templates", response_model=List[Template])
+async def list_templates(category: Optional[str] = None, user: User = Depends(require_auth)):
+    """List all templates"""
+    query = {"is_public": True}
+    if category:
+        query['category'] = category
+    
+    templates = await db.templates.find(query, {"_id": 0}).to_list(1000)
+    
+    for template in templates:
+        if isinstance(template.get('created_at'), str):
+            template['created_at'] = datetime.fromisoformat(template['created_at'])
+    
+    return templates
+
+@api_router.post("/templates/{template_id}/use")
+async def use_template(template_id: str, task_name: str, user: User = Depends(require_role(UserRole.EDITOR))):
+    """Create a task from a template"""
+    template = await db.templates.find_one({"id": template_id}, {"_id": 0})
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    # Find an operator of the template's type
+    operator = await db.operators.find_one({"type": template['operator_type']})
+    if not operator:
+        raise HTTPException(status_code=404, detail=f"No operator found for type {template['operator_type']}")
+    
+    # Create task from template
+    task_data = TaskCreate(
+        name=task_name,
+        description=template['description'],
+        operator_id=operator['id'],
+        action=template['action'],
+        parameters=template['parameters']
+    )
+    
+    task = await create_task(task_data, user)
+    
+    return task
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -830,7 +1207,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup"""
+    scheduler_service.start()
+    # Load existing schedules from database
+    schedules = await db.schedules.find({"enabled": True}, {"_id": 0}).to_list(1000)
+    for schedule in schedules:
+        try:
+            if schedule['schedule_type'] == 'cron':
+                await scheduler_service.add_scheduled_task(
+                    schedule['id'],
+                    schedule['task_id'],
+                    schedule['cron_expression'],
+                    lambda task_id: execute_scheduled_task(task_id, schedule['id']),
+                    enabled=schedule['enabled']
+                )
+            elif schedule['schedule_type'] == 'interval':
+                await scheduler_service.add_interval_task(
+                    schedule['id'],
+                    schedule['task_id'],
+                    schedule['interval_seconds'],
+                    lambda task_id: execute_scheduled_task(task_id, schedule['id']),
+                    enabled=schedule['enabled']
+                )
+        except Exception as e:
+            logger.error(f"Failed to load schedule {schedule['id']}: {e}")
+    
+    logger.info("GARVIS OpenClaw startup complete")
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    scheduler_service.shutdown()
     await service_manager.cleanup()
     client.close()

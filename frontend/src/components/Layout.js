@@ -10,7 +10,10 @@ import {
   LogOut,
   Shield,
   Zap,
-  Play
+  Play,
+  Clock,
+  GitBranch,
+  Files
 } from 'lucide-react';
 
 const Layout = ({ user, onLogout, children }) => {
@@ -21,6 +24,9 @@ const Layout = ({ user, onLogout, children }) => {
     { name: 'Operators', href: '/operators', icon: Cpu },
     { name: 'Tasks', href: '/tasks', icon: Zap },
     { name: 'Executions', href: '/executions', icon: Play },
+    { name: 'Schedules', href: '/schedules', icon: Clock },
+    { name: 'Workflows', href: '/workflows', icon: GitBranch },
+    { name: 'Templates', href: '/templates', icon: Files },
     { name: 'Audit Log', href: '/audit', icon: FileText },
     { name: 'Chat', href: '/chat', icon: MessageSquare },
   ];
