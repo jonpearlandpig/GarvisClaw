@@ -6,6 +6,14 @@ const OperatorVisualization = ({ operators, executions }) => {
   const [rotation, setRotation] = useState({ x: 20, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    setIsMobile(window.innerWidth < 768);
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const activeOperators = new Set(
     executions.filter(e => e.status === 'running').map(e => e.operator_type)
@@ -29,6 +37,7 @@ const OperatorVisualization = ({ operators, executions }) => {
     }
   }, [isDragging]);
 
+  // Mouse handlers
   const handleMouseDown = (e) => {
     setIsDragging(true);
     setDragStart({ x: e.clientX, y: e.clientY });
@@ -52,13 +61,40 @@ const OperatorVisualization = ({ operators, executions }) => {
     setIsDragging(false);
   };
 
-  // Arrange operators in a circle
+  // Touch handlers
+  const handleTouchStart = (e) => {
+    if (e.touches.length === 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (isDragging && e.touches.length === 1) {
+      const deltaX = e.touches[0].clientX - dragStart.x;
+      const deltaY = e.touches[0].clientY - dragStart.y;
+      
+      setRotation(prev => ({
+        x: Math.max(-90, Math.min(90, prev.x - deltaY * 0.3)),
+        y: (prev.y + deltaX * 0.3) % 360
+      }));
+      
+      setDragStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+  };
+
+  // Arrange operators in a circle (smaller radius on mobile)
   const getPosition = (index, total) => {
     const angle = (index / total) * Math.PI * 2;
-    const radius = 200;
+    const radius = isMobile ? 120 : 200;
+    const verticalSpread = isMobile ? 40 : 80;
     return {
       x: Math.cos(angle) * radius,
-      y: Math.sin(index * 0.5) * 80,
+      y: Math.sin(index * 0.5) * verticalSpread,
       z: Math.sin(angle) * radius
     };
   };
@@ -71,6 +107,10 @@ const OperatorVisualization = ({ operators, executions }) => {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      style={{ touchAction: 'none' }}
     >
       <div 
         className="operator-viz-scene"

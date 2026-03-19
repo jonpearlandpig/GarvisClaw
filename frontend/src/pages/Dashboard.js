@@ -59,15 +59,15 @@ const Dashboard = ({ user }) => {
   ];
 
   return (
-    <div className="space-y-8" data-testid="dashboard-page">
+    <div className="space-y-6 sm:space-y-8" data-testid="dashboard-page">
       {/* Header */}
       <div>
-        <h1 className="text-4xl font-bold text-white mb-2">GARVIS OpenClaw</h1>
-        <p className="text-gray-400">Governance, Authority, Routing, Verification, Intelligence, Sovereignty</p>
+        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mb-2">GARVIS OpenClaw</h1>
+        <p className="text-sm sm:text-base text-gray-400">Governance, Authority, Routing, Verification, Intelligence, Sovereignty</p>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
@@ -96,7 +96,7 @@ const Dashboard = ({ user }) => {
         </CardHeader>
         <CardContent>
           <OperatorVisualization operators={operators} executions={executions} />
-          <div className="mt-4 flex items-center justify-center space-x-4 text-sm">
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3 sm:gap-4 text-xs sm:text-sm">
             <div className="flex items-center space-x-2">
               <div className="w-3 h-3 rounded-full bg-blue-500"></div>
               <span className="text-gray-400">Browser</span>
@@ -119,7 +119,7 @@ const Dashboard = ({ user }) => {
             </div>
           </div>
           <p className="text-center text-xs text-gray-500 mt-3">
-            Drag to rotate • Scroll to zoom • Active operators pulse with thinking particles
+            <span className="hidden sm:inline">Drag to rotate • Scroll to zoom • </span>Active operators pulse with thinking particles
           </p>
         </CardContent>
       </Card>

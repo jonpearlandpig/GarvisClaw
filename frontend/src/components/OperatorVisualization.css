@@ -7,6 +7,14 @@
   overflow: hidden;
   position: relative;
   cursor: grab;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 768px) {
+  .operator-viz-container {
+    height: 400px;
+    perspective: 800px;
+  }
 }
 
 .operator-viz-container:active {
@@ -103,6 +111,47 @@
   font-size: 10px;
   color: #9ca3af;
   letter-spacing: 0.5px;
+}
+
+@media (max-width: 768px) {
+  .operator-sphere {
+    width: 60px;
+    height: 60px;
+  }
+  
+  .operator-node {
+    width: 60px;
+    height: 60px;
+    margin-left: -30px;
+    margin-top: -30px;
+  }
+  
+  .operator-label {
+    top: 70px;
+  }
+  
+  .operator-name {
+    font-size: 11px;
+  }
+  
+  .operator-type {
+    font-size: 8px;
+  }
+  
+  .hub-sphere {
+    width: 40px;
+    height: 40px;
+  }
+  
+  .operator-hub {
+    margin-left: -20px;
+    margin-top: -20px;
+  }
+  
+  .hub-label {
+    font-size: 14px;
+    top: 50px;
+  }
 }
 
 /* Thinking Particles */
