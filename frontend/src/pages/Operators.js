@@ -315,6 +315,46 @@ const Operators = ({ user }) => {
               </CardHeader>
               <CardContent>
                 <p className="text-gray-400 text-sm mb-4">{operator.description}</p>
+                
+                {/* TAI-D Metadata */}
+                {operator.metadata && (
+                  <div className="space-y-3 mb-4">
+                    {operator.metadata.tier && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Tier:</span>
+                        <span className="text-gray-300 font-medium">{operator.metadata.tier}</span>
+                      </div>
+                    )}
+                    {operator.metadata.phase_ownership && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Phases:</span>
+                        <span className="text-gray-300 font-mono text-xs">{operator.metadata.phase_ownership}</span>
+                      </div>
+                    )}
+                    {operator.metadata.decision_weight && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Decision Weight:</span>
+                        <span className="text-blue-400 font-bold">{operator.metadata.decision_weight}/5</span>
+                      </div>
+                    )}
+                    {operator.metadata.authorship_id && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Auth ID:</span>
+                        <span className="text-gray-300 font-mono">{operator.metadata.authorship_id}</span>
+                      </div>
+                    )}
+                    {operator.metadata.traits && operator.metadata.traits.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {operator.metadata.traits.map((trait, i) => (
+                          <span key={i} className="px-2 py-1 text-xs bg-gray-800 text-gray-400 rounded">
+                            {trait}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between text-gray-500">
                     <span>Status:</span>
