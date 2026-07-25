@@ -1,0 +1,12 @@
+schema_version: "1.0"
+system_id: GARVIS
+classification: experiment
+canonical_repository: false
+status: frozen_experiment
+owner: Jon Hartman
+may_receive_changes: false
+donor_to: null
+successor: jonpearlandpig/garvis42
+governance_version: "Pearl & Pig Governance v0.2"
+approved_on: "2026-07-25"
+notes: "Founder-approved experiment classification. Preserve evidence; do not treat as GARVIS implementation authority."
